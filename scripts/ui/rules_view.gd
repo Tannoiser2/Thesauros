@@ -47,8 +47,14 @@ Si gioca sul lato 1-2 senza zona 10. Un giocatore virtuale possiede i brevetti d
 [font_size=26][color=#e2674a]Iniziazione[/color][/font_size]
 Consigliata per la prima partita: 55$ iniziali con i minimi suggeriti per ogni conto, maschera, arpione e motore booster disponibili subito, le carte tesoro 1-4 al mercatino, trasferimenti possibili anche dalla cassa nera.
 
+[font_size=26][color=#e2674a]Variante «Senza fede né legge»[/color][/font_size]
+Per giocatori esperti che vogliono interazione diretta (da 2 a 4). Si parte con 55$; le prime tre tecnologie di livello 0 sono a caso. Alla fine dei quadrimestri 3, 5, 7 e 8 (dopo la manutenzione) si mette all'asta un [b]mercenario[/b] (ce ne sono 4): asta a voce in ordine di turno, solo con la cassa nera, rilanci sempre più alti finché tutti tranne uno passano; paga solo chi vince.
+Il mercenario si piazza come un meeple, ma sulla sua casella speciale (in testa alla coda nelle zone 1 e 4, in fondo nelle altre); può portare la busta, non la doppia azione, non diventa specialista. Agisce una volta sola, poi esce dal gioco; in quella zona resta un cubetto e nessun altro mercenario potrà più colpire lì. Finché resta in sede costa 2$ di stipendio.
+[b]1[/b] ruba tutti i segnalini doppia azione non usati. [b]2[/b] ruba il brevetto di una carta scoperta (e una copia dell'oggetto, se ne resta). [b]3[/b] ruba 2 carte tesoro del mercenario: aprono i siti e lì i tesori nascosti si prendono senza sonar. [b]4[/b] sabota gli idrovolanti grigi per il quadrimestre e ruba l'idrovolante nero, gratis in alto mare fino alla fine. [b]7[/b] recupera una mina subacquea: esplode su 3x3 caselle sotto la superficie di un sito, gli squali uccisi sono tuoi e i tesori distrutti. [b]8[/b] scambia due tesori del museo o ne sposta uno in un posto libero; una sala aperta che resta con un buco si richiude e chi l'aveva aperta perde i punti. [b]9[/b] tutti gli avversari perdono 4 punti reputazione.
+
 [font_size=26][color=#e2674a]Note della versione digitale[/color][/font_size]
-• La variante «Senza fede né legge» (mercenari) non è inclusa.
+• Nell'asta dei mercenari non si può offrire più di quanto c'è nella cassa nera (niente penalità per l'errore).
+• La mina si usa all'inizio del proprio turno in alto mare (zona 5), anche senza gommoni in mare.
 • Le tessere dei siti di scavo sono ridisegnate dai dati del modulo: la riga in alto è la superficie. Le tessere coperte le vedono solo i possessori della carta tesoro.
 • In immersione si sceglie quali tesori raggiungibili prendere; gli squali incontrati scendendo si affrontano con l'attrezzatura a bordo.
 • I gommoni stanno in porto finché non escono in laguna o al largo; in porto gli oggetti si caricano e scaricano liberamente.
@@ -77,7 +83,7 @@ func _ready() -> void:
 	pc.add_child(vb)
 	var hh := HBoxContainer.new()
 	vb.add_child(hh)
-	var t := UI.title("Regole", 44)
+	var t := UI.title("Manuale", 44)
 	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hh.add_child(t)
 	var back := UI.primary(UI.button("Chiudi" if popup else "Torna al menu", 240, 52, 22))
@@ -87,22 +93,77 @@ func _ready() -> void:
 		else:
 			main.show_menu())
 	hh.add_child(back)
+	var body := HBoxContainer.new()
+	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_theme_constant_override("separation", 16)
+	vb.add_child(body)
+	var list := VBoxContainer.new()
+	list.add_theme_constant_override("separation", 6)
+	list.custom_minimum_size.x = 360
+	body.add_child(list)
 	var sc := ScrollContainer.new()
 	sc.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	sc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	vb.add_child(sc)
-	var inner := VBoxContainer.new()
+	body.add_child(sc)
+	inner = VBoxContainer.new()
 	inner.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	inner.add_theme_constant_override("separation", 18)
 	sc.add_child(inner)
+	scroller = sc
+	var chapters := _chapters()
+	var btns := []
+	for k in chapters.size():
+		var b := UI.button(chapters[k][0], 360, 52, 19)
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.toggle_mode = true
+		b.button_pressed = k == 0
+		btns.append(b)
+		var kk: int = k
+		b.pressed.connect(func():
+			for j in btns.size():
+				btns[j].button_pressed = j == kk
+			_show(chapters[kk]))
+		list.add_child(b)
+	_show(chapters[0])
+
+
+var inner: VBoxContainer
+var scroller: ScrollContainer
+
+
+func _chapters() -> Array:
+	var out := [["Le regole in breve", TEXT], ["Le tecnologie", ""]]
+	out.append_array(Tutorial.STRATEGY)
+	var groups := [["Lezioni: le basi", ["intro", "budget"]], ["Lezioni: piazzamento e zone", ["place", "recruit", "z2", "z3", "dig", "z7", "z8", "bid"]],
+		["Lezioni: il mare", ["sea", "dive", "plane", "island"]], ["Lezioni: anno per anno", ["p2", "p4", "p7", "fine"]]]
+	for g in groups:
+		var t := ""
+		for k in g[1]:
+			for pg in Tutorial.LESSONS[k]:
+				t += "[font_size=26][color=#e2674a]%s[/color][/font_size]\n%s\n\n" % [pg[0], pg[1]]
+		out.append([g[0], t])
+	return out
+
+
+func _show(ch: Array) -> void:
+	for c in inner.get_children():
+		c.queue_free()
+	scroller.scroll_vertical = 0
+	if ch[0] == "Le tecnologie":
+		_techs()
+		return
 	var rt := RichTextLabel.new()
 	rt.bbcode_enabled = true
 	rt.fit_content = true
 	rt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	rt.add_theme_font_size_override("normal_font_size", 22)
 	rt.add_theme_font_size_override("bold_font_size", 22)
-	rt.text = TEXT
+	rt.text = ch[1] if ch[0] == "Le regole in breve" else "[font_size=34][color=#f5d27c]%s[/color][/font_size]\n%s" % [ch[0], ch[1]]
 	inner.add_child(rt)
+
+
+func _techs() -> void:
 	inner.add_child(UI.title("Le tecnologie", 34))
 	var flow := HFlowContainer.new()
 	flow.add_theme_constant_override("h_separation", 14)

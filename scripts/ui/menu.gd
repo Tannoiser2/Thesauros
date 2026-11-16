@@ -72,7 +72,7 @@ func _ready() -> void:
 	o1.add_theme_constant_override("separation", 30)
 	col.add_child(o1)
 	o1.add_child(_segmented("Vista", ["Tabellone 2D", "Tabellone 3D"], view3d, func(k): view3d = k, 170))
-	o1.add_child(_segmented("Modo", ["Standard", "Iniziazione"], initiation, func(k): initiation = k, 150))
+	o1.add_child(_segmented("Modo", ["Standard", "Iniziazione", "Senza fede né legge"], initiation, func(k): initiation = k, 150))
 	var o2 := HBoxContainer.new()
 	o2.add_theme_constant_override("separation", 30)
 	col.add_child(o2)
@@ -98,6 +98,19 @@ func _ready() -> void:
 		_store()
 		main.show_rules())
 	btns.add_child(rules)
+	var btns2 := HBoxContainer.new()
+	btns2.add_theme_constant_override("separation", 16)
+	col.add_child(btns2)
+	var tutb := UI.button("Tutorial: partita guidata", 420, 64, 22)
+	tutb.pressed.connect(func():
+		_store()
+		main.start_game(Tutorial.config()))
+	btns2.add_child(tutb)
+	var man := UI.button("Manuale e strategia", 300, 64, 22)
+	man.pressed.connect(func():
+		_store()
+		main.show_rules())
+	btns2.add_child(man)
 	msg = UI.label("", 21, UI.GOLD_L)
 	col.add_child(msg)
 	_refresh()
@@ -181,7 +194,7 @@ func _config() -> Dictionary:
 		seats.append({"name": nm, "ai": modes[s] != 0, "level": maxi(0, modes[s] - 1), "color": s})
 	var delays := [1.3, 0.7, 0.3, 0.0]
 	var anims := [0.6, 1.0, 1.8]
-	return {"seats": seats, "ai_delay": delays[speed], "anim": anims[anim], "view3d": view3d == 1, "initiation": initiation == 1}
+	return {"seats": seats, "ai_delay": delays[speed], "anim": anims[anim], "view3d": view3d == 1, "initiation": initiation == 1, "variant": initiation == 2 and np() >= 2}
 
 
 func _on_start() -> void:

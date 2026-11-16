@@ -91,6 +91,19 @@ const ZONE_HINT := {1: "Assumi un nuovo lavoratore (paga dal conto RU).",
 	8: "Finanzia una sala del museo oppure vendi un tesoro.",
 	9: "Pubblicità: guadagni reputazione (conto AG)."}
 
+## Mercenari (variante «Senza fede né legge»): effetto breve e descrizione per zona.
+const MERC_SHORT := {1: "ruba le doppie azioni", 2: "ruba un brevetto", 3: "ruba 2 carte tesoro", 4: "sabota gli idrovolanti e ruba quello nero",
+	7: "recupera una mina", 8: "rimescola il museo", 9: "campagna diffamatoria"}
+const MERC_TEXT := {
+	1: "Ruba tutti i segnalini doppia azione non ancora usati: quelli sotto i lavoratori da assumere e quelli sulle plance.",
+	2: "Ruba il brevetto di una carta tecnologia scoperta (e una copia dell'oggetto, se ne resta una): royalty e punti diventano tuoi.",
+	3: "Ruba 2 carte tesoro del mercenario: aprono i siti e lì i tesori nascosti si prendono senza sonar.",
+	4: "Sabota gli idrovolanti grigi per questo quadrimestre e ruba l'idrovolante nero, che usi gratis in alto mare fino alla fine.",
+	7: "Recupera una mina subacquea da far esplodere su un sito: uccide gli squali (tuoi) e distrugge i tesori in 3x3 caselle.",
+	8: "Scambia due tesori del museo o ne sposta uno in un posto libero: una sala che resta incompleta si richiude.",
+	9: "Campagna diffamatoria: tutti gli avversari perdono 4 punti reputazione.",
+}
+
 const LAGOON := {
 	"isola1": {"name": "Isola", "need": "metal"}, "isola2": {"name": "Isola", "need": "metal"},
 	"turisti": {"name": "Gita turistica", "money": 4}, "pesce": {"name": "Pesca costiera", "need": "arpione"},

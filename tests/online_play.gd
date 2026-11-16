@@ -27,6 +27,7 @@ func _run() -> void:
 	menu.anim = 2
 	menu.nplayers = 3
 	menu.modes = [0, 0, 2, 2]
+	menu.initiation = 2 if OS.get_environment("TH_VAR") == "1" else 0
 	menu._online_panel()
 	menu.on_name.text = "Host" if role == "host" else "Ospite"
 	if role == "host":

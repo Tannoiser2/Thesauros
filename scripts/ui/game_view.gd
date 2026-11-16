@@ -30,6 +30,14 @@ var focus_p := 0
 var _dirty := true
 var save_code := ""
 var humans: Array = []
+# tutorial e consiglio del tutor
+var tut := false
+var tut_seen := {}
+var tutor_on := false
+var tutor_ai: THAI
+var tutor_panel: PanelContainer
+var tutor_box: VBoxContainer
+var tutor_btn: Button
 
 
 func _ready() -> void:
@@ -52,6 +60,9 @@ func _ready() -> void:
 		focus_p = engine.online.seat
 		humans = [engine.online.seat]
 		engine.online.heartbeat_loop()
+	tut = bool(config.get("tutorial", false))
+	tutor_on = tut
+	tutor_ai = THAI.new(2, int(config["seed"]) + 977)
 	_build()
 	engine.changed.connect(func(): _dirty = true)
 	engine.log_added.connect(_on_log)
@@ -88,11 +99,17 @@ func _build() -> void:
 	add_child(vb)
 	for it in [["Menu", _ask_menu], ["Regole", _show_rules], ["Salva", _save_game], ["Tutto", _view_all],
 			["+", func(): _zoom(1.25)], ["-", func(): _zoom(0.8)],
-			["Ruota", func(): _rotate(PI / 2)], ["2D / 3D", _toggle_view]]:
+			["Ruota", func(): _rotate(PI / 2)], ["2D / 3D", _toggle_view], ["Tutor", _toggle_tutor]]:
 		var b := UI.button(it[0], 0, 50, 20)
 		b.custom_minimum_size.x = 62 if it[0].length() <= 1 else 0
 		b.pressed.connect(it[1])
 		vb.add_child(b)
+		if it[0] == "Tutor":
+			tutor_btn = b
+			b.toggle_mode = true
+			b.button_pressed = tutor_on
+			b.tooltip_text = "Mostra o nasconde il consiglio del tutor"
+			b.visible = not config.has("online")
 
 	toast_box = VBoxContainer.new()
 	toast_box.position = Vector2(20, 80)
@@ -177,6 +194,23 @@ func _build() -> void:
 	popup_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(popup_layer)
 
+	# consiglio del tutor: sopra le finestre, nella colonna di destra
+	tutor_panel = PanelContainer.new()
+	var ts := UI.panel_style(Color("#2a1d0d", 0.97), UI.GOLD, 2, 8)
+	ts.shadow_color = Color(0, 0, 0, 0.6)
+	ts.shadow_size = 12
+	tutor_panel.add_theme_stylebox_override("panel", ts)
+	tutor_panel.anchor_left = 1.0
+	tutor_panel.anchor_right = 1.0
+	tutor_panel.offset_left = -SIDE_W + 8
+	tutor_panel.offset_right = -8
+	tutor_panel.offset_top = 372
+	tutor_panel.visible = false
+	add_child(tutor_panel)
+	tutor_box = VBoxContainer.new()
+	tutor_box.add_theme_constant_override("separation", 8)
+	tutor_panel.add_child(tutor_box)
+
 
 func _process(_dt: float) -> void:
 	if _dirty:
@@ -246,6 +280,7 @@ func _phase_text() -> String:
 			return "Risoluzione delle azioni"
 		"salary": return "Pagamento degli stipendi"
 		"maint": return "Manutenzione"
+		"merc": return "Asta per un mercenario (cassa nera)"
 		"over": return "Partita finita"
 	return ""
 
@@ -371,6 +406,16 @@ func _company(p: int) -> void:
 		mrow.add_child(mm)
 	if e.ps[p]["dbl"] > 0:
 		mrow.add_child(_icon_count(UI.tex("res://assets/segnalini/doppia.png"), e.ps[p]["dbl"], 36, "Segnalino doppia azione"))
+	if e.variant:
+		var extra := []
+		if e.black_plane == p:
+			extra.append("idrovolante nero")
+		if e.mine_owner == p:
+			extra.append("mina subacquea")
+		if not e.ps[p]["merc_cards"].is_empty():
+			extra.append("carte del mercenario %s" % ", ".join(e.ps[p]["merc_cards"].map(func(x): return str(x))))
+		if not extra.is_empty():
+			company_box.add_child(UI.wrap(UI.label("Bottino dei mercenari: " + ", ".join(extra), 17, UI.CORAL), SIDE_W - 40))
 	# oggetti, tesori, carte, squali
 	var irow := HFlowContainer.new()
 	irow.add_theme_constant_override("h_separation", 4)
@@ -427,7 +472,7 @@ func _zod_where(z: Dictionary) -> String:
 
 func _meeple_icon(p: int, m: Dictionary, sz: float) -> Control:
 	var c := MeepleIcon.new()
-	c.col = UI.pcolor(engine, p)
+	c.col = Color("#1d1f22") if m.get("merc", false) else UI.pcolor(engine, p)
 	c.boss = m["boss"]
 	c.hat = m["hat"]
 	c.custom_minimum_size = Vector2(sz, sz)
@@ -435,6 +480,8 @@ func _meeple_icon(p: int, m: Dictionary, sz: float) -> Control:
 
 
 func _meeple_desc(m: Dictionary) -> String:
+	if m.get("merc", false):
+		return "Mercenario" + (", in sede" if m["loc"] in ["room", "idle"] else "")
 	var s := "Capo" if m["boss"] else ("Specialista n.%s" % ("5/7" if m["hat"] == 57 else str(m["hat"])) if m["hat"] != 0 else "Lavoratore")
 	var where := {"room": "in sede", "sea": "in mare", "lagoon": "in laguna", "shop": "al negozio di gommoni", "deck": "sul mazzo delle tecnologie"}
 	var loc: String = m["loc"]
@@ -512,6 +559,12 @@ func _on_fx(kind: String, d: Dictionary) -> void:
 			toast("%s forma uno specialista." % e.pname(d["p"]), UI.TEAL_L)
 		"island":
 			toast("%s trova qualcosa sull'isola." % e.pname(d["p"]), UI.SAND)
+		"merc":
+			toast("%s ingaggia un mercenario." % e.pname(d["p"]), UI.CORAL)
+		"mercact":
+			toast("Colpo del mercenario di %s in zona %d!" % [e.pname(d["p"]), d["z"]], UI.CORAL)
+		"mine":
+			toast("%s fa esplodere una mina nel sito %d!" % [e.pname(d["p"]), d["site"]], UI.CORAL)
 	_dirty = true
 
 
@@ -544,6 +597,8 @@ func online_cancel_decision(t: String) -> void:
 # ================================================================ decisioni: base
 
 func _clear_prompt() -> void:
+	if tutor_panel != null:
+		tutor_panel.visible = false
 	pending = {}
 	aux = {}
 	prompt.visible = false
@@ -610,11 +665,23 @@ func _on_decision(req: Dictionary) -> void:
 	focus_p = p
 	board.viewer = p
 	_dirty = true
-	var secret_types := ["budget", "bid", "dig", "sat", "reserve"]
-	if humans.size() > 1 and req["type"] in secret_types:
-		_curtain(p, func(): _show_decision(req))
-	else:
+	var secret_types := ["budget", "bid", "dig", "sat", "reserve", "merc_bid", "merc3"]
+	var go := func():
 		_show_decision(req)
+		_tutor_show(req)
+	if tut:
+		var ks: Array = Tutorial.keys_for(engine, req, tut_seen)
+		if not ks.is_empty():
+			var pages := []
+			for k in ks:
+				tut_seen[k] = true
+				pages.append_array(Tutorial.LESSONS[k])
+			show_lesson(pages, 0, go)
+			return
+	if humans.size() > 1 and req["type"] in secret_types:
+		_curtain(p, go)
+	else:
+		go.call()
 
 
 func _curtain(p: int, then: Callable) -> void:
@@ -643,6 +710,11 @@ func _show_decision(req: Dictionary) -> void:
 		"island": _ui_island(req)
 		"z8": _ui_z8(req)
 		"bid": _ui_bid(req)
+		"merc_bid": _ui_merc_bid(req)
+		"merc2": _ui_merc2(req)
+		"merc3": _ui_merc3(req)
+		"merc8": _ui_merc8(req)
+		"mine": _ui_mine(req)
 		"reserve": _ui_reserve(req)
 		_:
 			_submit(engine.ais[req["seat"]].decide(engine, req["seat"], req))
@@ -833,18 +905,30 @@ func _ui_place(req: Dictionary, recruit: bool) -> void:
 			var seen := {}
 			for mid in req["meeples"]:
 				var mm: Dictionary = e.meeple(p, mid)
-				var key := "%s_%d" % [mm["boss"], mm["hat"]]
+				var key := "%s_%d_%s" % [mm["boss"], mm["hat"], mm.get("merc", false)]
 				if seen.has(key):
 					continue
 				seen[key] = true
-				var b := _ptoggle(_meeple_desc(mm).split(",")[0], mid == aux["m"] or (key == "%s_%d" % [m["boss"], m["hat"]]), func(_on):
+				var b := _ptoggle(_meeple_desc(mm).split(",")[0], mid == aux["m"] or (key == "%s_%d_%s" % [m["boss"], m["hat"], m.get("merc", false)]), func(_on):
 					aux["m"] = mid
 					build.call())
 				b.add_theme_color_override("font_pressed_color", UI.INK)
 		if req["can_env"]:
 			_ptoggle("Con la busta (zona 10)", aux["env"], func(on): aux["env"] = on)
-		if req["can_dbl"]:
+		var is_merc: bool = m.get("merc", false)
+		if req["can_dbl"] and not is_merc:
 			_ptoggle("Doppia azione", aux["dbl"], func(on): aux["dbl"] = on)
+		if is_merc:
+			_ptitle("%s, manda il mercenario in una zona: agisce una volta sola, %s" % [e.pname(p), "e quella zona non potrà più averne altri."])
+			for z in req.get("merc_zones", []):
+				var zm: int = z
+				var bm := _pbtn("%d %s: %s" % [z, D.ZONE_NAMES[z], D.MERC_SHORT[z]], func(): _submit({"m": aux["m"], "z": zm, "env": aux["env"], "dbl": false}))
+				bm.tooltip_text = D.MERC_TEXT[z]
+				_hot("z%d" % z, board.merc_pos(z), str(z), 60.0, UI.CORAL)
+			aux["spot_cb"] = func(id: String):
+				if id.begins_with("z"):
+					_submit({"m": aux["m"], "z": int(id.substr(1)), "env": aux["env"], "dbl": false})
+			return
 		var zones: Array = req["zones"]
 		for z in zones:
 			var lbl := "%d %s%s" % [z, D.ZONE_NAMES[z], _zone_hint(p, z)]
@@ -1028,7 +1112,7 @@ func _ui_plane(req: Dictionary) -> void:
 	var ids: Array = req["zods"]
 	aux["zod"] = ids[0]
 	aux["swap"] = false
-	var dlg := _dialog("Idrovolante (%d$)" % req["cost"], 900)
+	var dlg := _dialog("Idrovolante nero (gratis)" if req.get("black", false) else "Idrovolante (%d$)" % req["cost"], 900)
 	var box: VBoxContainer = dlg["box"]
 	box.add_child(UI.wrap(UI.label("L'idrovolante raggiunge un tuo gommone in mare: puoi scambiare gli oggetti fra il magazzino e il gommone%s." % (" e scambiare il pilota con l'equipaggio" if req["swap"] else ""), 19, UI.MUTED), 840))
 	var inner := VBoxContainer.new()
@@ -1372,6 +1456,174 @@ func _ui_bid(req: Dictionary) -> void:
 	box.add_child(br)
 
 
+# ================================================================ variante: mercenari
+
+func _ui_merc_bid(req: Dictionary) -> void:
+	var e := engine
+	var mx: int = req["max"]
+	var high: int = req["high"]
+	aux["bid"] = high + 1
+	var dlg := _dialog("Asta per un mercenario", 760)
+	var box: VBoxContainer = dlg["box"]
+	var who: String = ("Offerta più alta: %d$ di %s." % [high, e.pname(req["by"])]) if req["by"] >= 0 else "Ancora nessuna offerta."
+	box.add_child(UI.wrap(UI.label("%s Rilanci dalla cassa nera (hai %d$) oppure passi: chi passa esce dall'asta. Paga solo chi vince." % [who, mx], 20, UI.SAND), 700))
+	var zl := []
+	for z in req["zones"]:
+		zl.append("%d %s (%s)" % [z, D.ZONE_NAMES[z], D.MERC_SHORT[z]])
+	box.add_child(UI.wrap(UI.label("Dove può ancora colpire un mercenario: " + "; ".join(zl) + ".", 18, UI.MUTED), 700))
+	var r := _row()
+	var v := UI.label("", 40, UI.GOLD_L, UI.font_bold)
+	v.custom_minimum_size.x = 120
+	v.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var upd := func(): v.text = "%d$" % aux["bid"]
+	for d in [-5, -1]:
+		var b := UI.button(str(d), 70, 56, 22)
+		b.pressed.connect(func():
+			aux["bid"] = clampi(aux["bid"] + d, high + 1, mx)
+			upd.call())
+		r.add_child(b)
+	r.add_child(v)
+	for d in [1, 5]:
+		var b := UI.button("+%d" % d, 70, 56, 22)
+		b.pressed.connect(func():
+			aux["bid"] = clampi(aux["bid"] + d, high + 1, mx)
+			upd.call())
+		r.add_child(b)
+	box.add_child(r)
+	upd.call()
+	var br := _row()
+	var ok := UI.primary(UI.button("Rilancia", 200, 56, 22))
+	ok.disabled = high + 1 > mx
+	ok.pressed.connect(func(): _submit({"bid": aux["bid"]}))
+	br.add_child(ok)
+	var no := UI.button("Passa", 160, 56, 20)
+	no.pressed.connect(func(): _submit({"bid": 0}))
+	br.add_child(no)
+	box.add_child(br)
+
+
+func _ui_merc2(req: Dictionary) -> void:
+	var e := engine
+	var dlg := _dialog("Il mercenario ruba un brevetto", 1200)
+	dlg["box"].add_child(UI.wrap(UI.label("Scegli una carta tecnologia scoperta: il brevetto diventa tuo (royalty e punti di fine partita) e, se ne resta una copia, prendi anche l'oggetto.", 19, UI.MUTED), 1140))
+	var fl := _flow()
+	dlg["box"].add_child(fl)
+	for t in req["techs"]:
+		var v := VBoxContainer.new()
+		var b := Button.new()
+		b.custom_minimum_size = Vector2(150, 216)
+		b.icon = UI.tech_tex(t)
+		b.expand_icon = true
+		var tt: String = t
+		b.pressed.connect(func(): _submit({"t": tt}))
+		v.add_child(b)
+		var own: int = e.tech_owner[t]
+		v.add_child(UI.wrap(UI.label("%s\n%s" % [D.ITEMS[t]["name"], ("di " + e.pname(own)) if own >= 0 and own < e.n else "libero"], 16, UI.SAND), 150))
+		fl.add_child(v)
+
+
+func _ui_merc3(req: Dictionary) -> void:
+	aux["nums"] = []
+	var dlg := _dialog("Il mercenario ruba 2 carte tesoro", 760)
+	var box: VBoxContainer = dlg["box"]
+	box.add_child(UI.wrap(UI.label("Le carte del mercenario aprono i loro siti di scavo come le altre e in più, lì, i tesori nascosti si prendono senza sonar.", 19, UI.MUTED), 700))
+	var fl := _flow()
+	box.add_child(fl)
+	var ok := UI.primary(UI.button("Conferma", 220, 56, 22))
+	ok.disabled = true
+	for k in req["pool"]:
+		var b := Button.new()
+		b.toggle_mode = true
+		b.custom_minimum_size = Vector2(110, 120)
+		b.icon = UI.card_tex(k)
+		b.expand_icon = true
+		var kk: int = k
+		b.toggled.connect(func(on):
+			if on:
+				aux["nums"].append(kk)
+			else:
+				aux["nums"].erase(kk)
+			ok.disabled = aux["nums"].size() != mini(2, req["pool"].size()))
+		fl.add_child(b)
+	ok.pressed.connect(func(): _submit({"nums": aux["nums"].duplicate()}))
+	box.add_child(ok)
+
+
+func _museum_spot_pos(id: String) -> Vector2:
+	var e := engine
+	if id.begins_with("s"):
+		var k := int(id.substr(1))
+		return e.L["storage"] + Vector2((k % 3) * 46 - 46, -60 + int(k / 3) * 40)
+	var a := id.substr(1).split("_")
+	return e.rooms[int(a[0])]["cfg"]["spots"][int(a[1])]
+
+
+func _ui_merc8(req: Dictionary) -> void:
+	var e := engine
+	aux["x"] = ""
+	var build := func(): pass
+	build = func():
+		for c in prompt_box.get_children():
+			c.queue_free()
+		board.hot = {}
+		if aux["x"] == "":
+			_ptitle("Il mercenario nel museo: tocca un tesoro da spostare in un posto libero o da scambiare con un altro. Una sala che resta con un buco si richiude e chi l'ha aperta perde i punti dell'apertura.")
+			for id in req["spots"]:
+				_hot(id, _museum_spot_pos(id), "", 44.0, UI.CORAL)
+		else:
+			_ptitle("Ora tocca il posto libero dove spostarlo, oppure un altro tesoro con cui scambiarlo.")
+			for id in req["free"]:
+				_hot("to:" + id, _museum_spot_pos(id), "", 44.0, UI.TEAL_L)
+			for id in req["spots"]:
+				if id != aux["x"]:
+					_hot("sw:" + id, _museum_spot_pos(id), "", 44.0, UI.GOLD_L)
+			_pbtn("Scegli un altro tesoro", func():
+				aux["x"] = ""
+				build.call())
+		_pbtn("Il mercenario non fa nulla", func(): _submit({"a": "none"}))
+		_dirty = true
+	aux["spot_cb"] = func(id: String):
+		if aux["x"] == "":
+			aux["x"] = id
+			build.call()
+		elif id.begins_with("to:"):
+			_submit({"a": "move", "x": aux["x"], "to": id.substr(3)})
+		elif id.begins_with("sw:"):
+			_submit({"a": "swap", "x": aux["x"], "y": id.substr(3)})
+	build.call()
+	board.focus(Vector2(450, 1500), maxf(board.zoom, 0.4))
+
+
+func _ui_mine(req: Dictionary) -> void:
+	var e := engine
+	var opts: Dictionary = req["options"]
+	aux["site"] = -1
+	var build := func(): pass
+	build = func():
+		for c in prompt_box.get_children():
+			c.queue_free()
+		board.hot = {}
+		if aux["site"] < 0:
+			_ptitle("Hai la mina subacquea: tocca un sito per farla esplodere (copre 3x3 caselle sotto la superficie: uccide gli squali, che diventano tuoi, e distrugge i tesori). Puoi anche tenerla per dopo.")
+			for k in opts:
+				_hot("k%d" % k, e.L["sites"][k]["c"], "Sito %d" % k, 140.0, UI.CORAL)
+		else:
+			_ptitle("Sito %d: quali colonne copre la mina?" % aux["site"])
+			for c0 in opts[aux["site"]]:
+				var cc: int = c0
+				_pbtn("Colonne %d-%d" % [c0 + 1, c0 + 3], func(): _submit({"site": aux["site"], "col": cc}), true)
+			_pbtn("Un altro sito", func():
+				aux["site"] = -1
+				build.call())
+		_pbtn("Tienila per dopo", func(): _submit({"none": true}))
+		_dirty = true
+	aux["spot_cb"] = func(id: String):
+		if id.begins_with("k"):
+			aux["site"] = int(id.substr(1))
+			build.call()
+	build.call()
+
+
 # ================================================================ finestre varie
 
 func _company_popup(p: int) -> void:
@@ -1499,3 +1751,102 @@ func _on_end(res: Dictionary) -> void:
 	look.pressed.connect(func(): dlg["root"].queue_free())
 	r.add_child(look)
 	box.add_child(r)
+	if tut and not tut_seen.has("fine"):
+		tut_seen["fine"] = true
+		show_lesson(Tutorial.LESSONS["fine"], 0, func(): pass)
+
+
+# ================================================================ tutorial e consiglio del tutor
+
+func _toggle_tutor() -> void:
+	tutor_on = not tutor_on
+	if tutor_btn != null:
+		tutor_btn.button_pressed = tutor_on
+	if tutor_on and not pending.is_empty():
+		_tutor_show(pending)
+	elif tutor_panel != null:
+		tutor_panel.visible = false
+
+
+## Lezione a pagine; alla chiusura chiama then.
+func show_lesson(pages: Array, i: int, then: Callable) -> void:
+	var dlg := _dialog(pages[i][0], 1000)
+	var box: VBoxContainer = dlg["box"]
+	dlg["root"].z_index = 40
+	var rt := RichTextLabel.new()
+	rt.bbcode_enabled = true
+	rt.fit_content = true
+	rt.scroll_active = false
+	rt.custom_minimum_size = Vector2(940, 0)
+	rt.add_theme_font_size_override("normal_font_size", 23)
+	rt.add_theme_font_size_override("bold_font_size", 23)
+	rt.text = pages[i][1]
+	box.add_child(rt)
+	var h := _row()
+	if i > 0:
+		var b0 := UI.button("Indietro", 180, 56, 21)
+		b0.pressed.connect(func():
+			dlg["root"].queue_free()
+			show_lesson(pages, i - 1, then))
+		h.add_child(b0)
+	var cnt := UI.label("Pagina %d di %d" % [i + 1, pages.size()] if pages.size() > 1 else "", 19, UI.MUTED)
+	cnt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cnt.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cnt.custom_minimum_size.x = 200
+	h.add_child(cnt)
+	var nx := UI.primary(UI.button("Avanti" if i < pages.size() - 1 else "Ho capito", 220, 56, 22))
+	nx.pressed.connect(func():
+		dlg["root"].queue_free()
+		if i < pages.size() - 1:
+			show_lesson(pages, i + 1, then)
+		else:
+			then.call())
+	h.add_child(nx)
+	box.add_child(h)
+
+
+func _tutor_show(req: Dictionary) -> void:
+	if not tutor_on or engine.online != null or tutor_panel == null:
+		return
+	for c in tutor_box.get_children():
+		c.queue_free()
+	var p: int = req["seat"]
+	var r = tutor_ai.decide(engine, p, req)
+	var adv: Array = Tutorial.advice(engine, p, req, r)
+	if str(adv[0]) == "":
+		tutor_panel.visible = false
+		return
+	var hd := _row()
+	var tl := UI.heading("Consiglio del tutor", 22, UI.GOLD_L)
+	tl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hd.add_child(tl)
+	var hide := UI.button("Nascondi", 0, 40, 17)
+	hide.pressed.connect(func(): tutor_panel.visible = false)
+	hd.add_child(hide)
+	tutor_box.add_child(hd)
+	tutor_box.add_child(UI.wrap(UI.label(str(adv[0]), 20, UI.TEXT, UI.font_bold), SIDE_W - 50))
+	if str(adv[1]) != "":
+		tutor_box.add_child(UI.wrap(UI.label(str(adv[1]), 19, UI.SAND, UI.font_body), SIDE_W - 50))
+	var h := _row()
+	var fol := UI.primary(UI.button("Segui il consiglio", 0, 50, 19))
+	fol.pressed.connect(func():
+		if pending == req:
+			_submit(r))
+	h.add_child(fol)
+	if Tutorial.LESSONS.has(req["type"]):
+		var lb := UI.button("Rivedi la lezione", 0, 50, 18)
+		lb.pressed.connect(func(): show_lesson(Tutorial.LESSONS[req["type"]], 0, func(): pass))
+		h.add_child(lb)
+	tutor_box.add_child(h)
+	tutor_panel.visible = true
+	tutor_panel.offset_bottom = tutor_panel.offset_top
+	_shrink_tutor()
+
+
+## Il riquadro si adatta al testo: due cicli dopo, quando le etichette conoscono la loro altezza.
+func _shrink_tutor() -> void:
+	for k in 2:
+		await get_tree().process_frame
+		if is_instance_valid(tutor_panel):
+			tutor_panel.offset_bottom = tutor_panel.offset_top
+			tutor_panel.size = Vector2(tutor_panel.size.x, 0)

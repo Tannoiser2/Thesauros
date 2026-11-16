@@ -1,7 +1,7 @@
 {
   "titolo": "Thesauros",
   "sottotitolo": "cacciatori di tesori sommersi",
-  "descrizione": "Il gestionale di Cédric Millet (Super Meeple): agenzie di recupero di relitti con budget annuale su cinque conti, piazzamento di capi, lavoratori e specialisti, brevetti e attrezzature, carte tesoro per i siti di scavo, gommoni in alto mare fra squali, sonar e rocce, e i tesori migliori esposti al museo. Da 1 a 4 compagnie, con IA, modo Iniziazione e solitario ufficiale. Tabellone originale in 2D e vista 3D con i modelli del modulo, tutto in italiano. Online con gli amici e partite salvate su Firebase.",
+  "descrizione": "Il gestionale di Cédric Millet (Super Meeple): agenzie di recupero di relitti con budget annuale su cinque conti, piazzamento di capi, lavoratori e specialisti, brevetti e attrezzature, carte tesoro per i siti di scavo, gommoni in alto mare fra squali, sonar e rocce, e i tesori migliori esposti al museo. Da 1 a 4 compagnie, con IA tarata su migliaia di partite, modo Iniziazione, solitario ufficiale e la variante dei mercenari «Senza fede né legge». Tutorial con partita guidata e consigli del tutor. Tabellone originale in 2D e vista 3D con i modelli del modulo, tutto in italiano. Online con gli amici e partite salvate su Firebase.",
   "online": true,
   "sezione": "conversione",
   "ordine": 199,

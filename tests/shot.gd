@@ -5,6 +5,7 @@ extends SceneTree
 
 var out := "/tmp/shots"
 var taken := {}
+var variant := false
 
 func _init() -> void:
 	var args := OS.get_cmdline_user_args()
@@ -14,6 +15,7 @@ func _init() -> void:
 	var w := int(args[2]) if args.size() > 2 else 1920
 	var h := int(args[3]) if args.size() > 3 else 1080
 	var v3 := args.size() > 4 and args[4] == "3d"
+	variant = args.size() > 5 and args[5] == "var"
 	DirAccess.make_dir_recursive_absolute(out)
 	_run(np, w, h, v3)
 
@@ -36,7 +38,7 @@ func _run(np: int, w: int, h: int, v3: bool) -> void:
 	var seats := []
 	for i in np:
 		seats.append({"name": "Stefano" if i == 0 else "", "ai": i != 0, "level": 1, "color": i})
-	main.start_game({"seats": seats, "ai_delay": 0.0, "anim": 4.0, "view3d": v3, "seed": 11})
+	main.start_game({"seats": seats, "ai_delay": 0.0, "anim": 4.0, "view3d": v3, "seed": 11, "variant": variant})
 	var g = main.current
 	await create_timer(1.0).timeout
 	var guard := 0

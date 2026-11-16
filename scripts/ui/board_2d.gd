@@ -223,6 +223,7 @@ func _draw() -> void:
 	_draw_tracks()
 	_draw_sites()
 	_draw_island()
+	_draw_mercs()
 	if not flat_only:
 		_draw_zodiacs()
 		_draw_queues()
@@ -573,6 +574,42 @@ func _draw_queues() -> void:
 			var ms: Array = e.meeples_at(p, "shop")
 			if not ms.is_empty():
 				draw_meeple(D.SHOP[i] + Vector2(0, -20), _pc(p), 60, ms[0]["boss"], ms[0]["hat"])
+
+
+# ---------------------------------------------------------------- mercenari
+
+## Casella del mercenario: in testa alla coda (zone 1 e 4) o in fondo (le altre).
+func merc_pos(z: int) -> Vector2:
+	var pos: Array = e.L["queues"][z]["pos"]
+	if z in e.MERC_HEAD:
+		return pos[0] + Vector2(-60, -74)
+	var last := 0
+	for i in pos.size():
+		var mp: int = e.L["queues"][z]["minp"][i]
+		if mp == 0 or e.n >= mp:
+			last = i
+	return pos[last] + Vector2(-60, 74)
+
+
+func _draw_mercs() -> void:
+	if not e.variant:
+		return
+	for z in e.merc_q:
+		var x: Dictionary = e.merc_q[z]
+		var c := merc_pos(z)
+		draw_meeple(c, Color("#1d1f22"), 64)
+		draw_circle(c + Vector2(30, 24), 13, _pc(x["p"]))
+	for z in e.merc_used:
+		_cube(merc_pos(z), _pc(e.merc_used[z]), 30)
+	# idrovolante nero e mina
+	if e.black_plane >= 0:
+		var zs: Array = e.zods_of(e.black_plane, "sea")
+		var at: Vector2 = zod_pos(zs[0]) + Vector2(-86, -46) if not zs.is_empty() else D.PLANES[1] + Vector2(140, 0)
+		_plane(at, Color("#26292d"))
+		draw_circle(at + Vector2(0, 40), 12, _pc(e.black_plane))
+	if e.mercs_left > 0:
+		for i in e.mercs_left:
+			draw_meeple(Vector2(3330 - i * 70, 1560), Color("#1d1f22"), 56)
 
 
 # ---------------------------------------------------------------- zone selezionabili

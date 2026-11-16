@@ -44,6 +44,7 @@ var side := "34"
 var L: Dictionary = {}           # disposizione del lato in uso
 var solo := false
 var initiation := false
+var variant := false             # «Senza fede né legge»: aste per i mercenari
 var replay: Array = []           # decisioni già prese (partita caricata da un salvataggio)
 var replay_i := 0
 var record: Array = []           # tutte le decisioni della partita (per salvarla)
@@ -84,6 +85,16 @@ var result := {}
 var log_lines: Array = []
 var last_dice := []
 var history: Array = []          # reputazione a fine quadrimestre, per il riepilogo
+# variante dei mercenari
+var mercs_left := 0              # mercenari ancora da mettere all'asta
+var merc_q := {}                 # zona -> {p, m} (casella del mercenario in questo quadrimestre)
+var merc_used := {}              # zona -> giocatore che vi ha già usato un mercenario (il cubetto resta)
+var merc_pool: Array = []        # carte tesoro del mercenario ancora disponibili
+var black_plane := -1            # proprietario dell'idrovolante nero
+var mine_owner := -1             # chi ha la mina subacquea (non ancora usata)
+var planes_off := false          # idrovolanti grigi sabotati fino alla manutenzione
+const MERC_ZONES := [1, 2, 3, 4, 7, 8, 9]
+const MERC_HEAD := [1, 4]        # zone in cui il mercenario agisce prima della coda
 
 
 # ================================================================ preparazione
@@ -93,6 +104,7 @@ func setup(cfg: Dictionary) -> void:
 	n = players.size()
 	solo = n == 1
 	initiation = bool(cfg.get("initiation", false))
+	variant = bool(cfg.get("variant", false)) and players.size() >= 2 and not initiation
 	side = "34" if n >= 3 else "12"
 	L = D.SIDES[side]
 	if cfg.has("seed"):
@@ -111,7 +123,7 @@ func setup(cfg: Dictionary) -> void:
 			ms.append({"id": i * 10 + k + 1, "boss": false, "hat": 0, "loc": "room" if k < 2 else "reserve"})
 		ps.append({"acc": {"hr": 0, "rd": 0, "gp": 0, "me": 0, "bc": 0}, "inc": "gp", "rep": 10, "meeples": ms,
 			"hired": 0, "dbl": 0, "stock": {"metal": 1}, "treasures": [], "cards": [], "sat": [], "sharks": 0,
-			"cash": 0, "fish": 0, "zods": [i]})
+			"cash": 0, "fish": 0, "zods": [i], "merc_cards": [], "merc_n": 0})
 	zods.clear()
 	for z in 8:
 		zods.append({"id": z, "color": D.ZODIAC_COLORS[z], "owner": z if z < n else -1, "loc": "port" if z < n else "shop",
@@ -267,7 +279,10 @@ func meeples_at(p: int, loc: String) -> Array:
 func workers(p: int) -> int:
 	var c := 0
 	for m in ps[p]["meeples"]:
-		if not m["boss"] and m["loc"] != "reserve":
+		if m.get("merc", false):
+			if m["loc"] == "room":
+				c += 1
+		elif not m["boss"] and m["loc"] != "reserve" and m["loc"] != "gone":
 			c += 1
 	return c
 
@@ -279,6 +294,8 @@ func reserve_left(p: int) -> int:
 func meeple_name(m: Dictionary) -> String:
 	if m.is_empty():
 		return "?"
+	if m.get("merc", false):
+		return "un mercenario"
 	if m["boss"]:
 		return "il capo"
 	if m["hat"] != 0:
@@ -287,7 +304,7 @@ func meeple_name(m: Dictionary) -> String:
 
 
 func expert(m: Dictionary, zone: int) -> bool:
-	if m.is_empty():
+	if m.is_empty() or m.get("merc", false):
 		return false
 	if m["boss"]:
 		return true
@@ -376,6 +393,8 @@ func run() -> void:
 				return
 			if period < 9:
 				await _phase_maint()
+				if variant and period in [3, 5, 7, 8]:
+					await _merc_auction()
 		if y < 3 and not solo:
 			_year_end()
 	_end_game()
@@ -393,7 +412,7 @@ func _setup_game() -> void:
 	# ordine di turno a caso e compensi
 	order = range(n)
 	_shuffle(order)
-	var start := 55 if (initiation or solo) else 50
+	var start := 55 if (initiation or solo or variant) else 50
 	for i in n:
 		var p: int = order[i]
 		ps[p]["cash"] = start + (L["comp"][i] if i < L["comp"].size() else 0)
@@ -405,7 +424,19 @@ func _setup_game() -> void:
 		tech_owner[t] = -1
 		tech_sold[t] = 0
 	tech_slots[0] = "maschera"
-	if initiation:
+	if variant:
+		# variante: tre carte di livello 0 a caso (non per forza la maschera)
+		var v0 := ["maschera", "arpione", "sonar", "mot_piccolo"]
+		_shuffle(v0)
+		for i in 3:
+			tech_slots[i] = v0[i]
+		var vmix := [v0[3], "bombola", "mot_medio", "trapano", "sonar_av", "fucile", "nassa"]
+		_shuffle(vmix)
+		var vtop: Array = vmix.slice(0, 3)
+		var vrest: Array = vmix.slice(3) + ["gabbia", "scafandro", "mot_super", "martello", "satellite"]
+		_shuffle(vrest)
+		deck = vtop + vrest
+	elif initiation:
 		tech_slots[1] = "arpione"
 		tech_slots[2] = "mot_piccolo"
 		var a := ["bombola", "sonar", "fucile", "nassa"]
@@ -479,8 +510,12 @@ func _setup_game() -> void:
 	z6_idx = 0
 	z9_idx = 0
 	planes = ["home", "home"]
+	if variant:
+		mercs_left = 4
+		merc_pool = range(1, L["cards_max"] + 1)
+		merc_used.clear()
 	log_msg("Inizia la partita: %d %s, tabellone per %s giocatori%s." % [n, "compagnia" if n == 1 else "compagnie", "1-2" if side == "12" else "3-4",
-		" (Iniziazione)" if initiation else ""])
+		" (Iniziazione)" if initiation else (" (variante «Senza fede né legge»)" if variant else "")])
 	var names := []
 	for p in order:
 		names.append(pname(p))
@@ -567,9 +602,13 @@ func _phase_place() -> void:
 	phase = "place"
 	zone_now = 0
 	_clear_queues()
+	merc_q.clear()
 	envelopes.clear()
 	for p in n:
 		ps[p]["env_used"] = false
+		for m in ps[p]["meeples"]:
+			if m["loc"] == "idle":
+				m["loc"] = "room"
 	if not reserved_next.is_empty():
 		var rp: int = reserved_next["p"]
 		queues[2][0] = {"p": rp, "m": reserved_next["m"], "dbl": false}
@@ -590,7 +629,7 @@ func _phase_place() -> void:
 				ids.append(m["id"])
 			var zones := zone_options(p)
 			var req := {"type": "place", "zones": zones, "meeples": ids, "can_env": not solo and not ps[p]["env_used"],
-				"can_dbl": ps[p]["dbl"] > 0}
+				"can_dbl": ps[p]["dbl"] > 0, "merc_zones": merc_zones()}
 			var r = await decide(p, req)
 			if abort:
 				return
@@ -598,13 +637,38 @@ func _phase_place() -> void:
 			if not (mid in ids):
 				mid = ids[0]
 			var z := int(r.get("z", 6)) if r is Dictionary else 6
-			if not (z in zones):
+			var is_merc: bool = meeple(p, mid).get("merc", false)
+			if is_merc and not (z in req["merc_zones"]):
+				# un mercenario va solo nelle caselle libere dei mercenari: se non ce ne sono, si usa un altro meeple
+				var other := -1
+				for x in ids:
+					if not meeple(p, x).get("merc", false):
+						other = x
+						break
+				if other >= 0 or req["merc_zones"].is_empty():
+					mid = other if other >= 0 else mid
+					is_merc = other < 0
+				if is_merc:
+					z = req["merc_zones"][0] if not req["merc_zones"].is_empty() else -1
+			if not is_merc and not (z in zones):
 				z = 6
 			var env: bool = r is Dictionary and bool(r.get("env", false)) and req["can_env"]
-			var dbl: bool = r is Dictionary and bool(r.get("dbl", false)) and req["can_dbl"] and z in [1, 2, 3, 6, 8, 9]
+			var dbl: bool = r is Dictionary and bool(r.get("dbl", false)) and req["can_dbl"] and z in [1, 2, 3, 6, 8, 9] and not is_merc
 			if env:
 				envelopes.append(p)
 				ps[p]["env_used"] = true
+			if is_merc:
+				if z < 0:
+					# nessuna casella libera: il mercenario resta in sede
+					meeple(p, mid)["loc"] = "idle"
+					log_msg("%s non trova un posto per il mercenario." % pname(p))
+					continue
+				merc_q[z] = {"p": p, "m": mid}
+				meeple(p, mid)["loc"] = "mq%d" % z
+				log_msg("%s manda un mercenario in zona %d (%s)%s." % [pname(p), z, D.ZONE_NAMES[z], " con la busta per le autorità" if env else ""])
+				changed.emit()
+				await _pace(0.25)
+				continue
 			put_in_queue(p, mid, z, dbl)
 			log_msg("%s manda %s in zona %d (%s)%s%s." % [pname(p), meeple_name(meeple(p, mid)), z, D.ZONE_NAMES[z],
 				" con la busta per le autorità" if env else "", ", con la doppia azione" if dbl else ""])
@@ -621,6 +685,8 @@ func _phase_resolve() -> void:
 	for z in range(1, 11):
 		zone_now = z
 		changed.emit()
+		if variant and merc_q.has(z) and z in MERC_HEAD:
+			await _merc_act(z)
 		match z:
 			1: await _zone1()
 			2: await _zone_generic(2)
@@ -632,6 +698,8 @@ func _phase_resolve() -> void:
 			8: await _zone_generic(8)
 			9: _zone9()
 			10: await _zone10()
+		if variant and merc_q.has(z) and not (z in MERC_HEAD):
+			await _merc_act(z)
 		if abort:
 			return
 		await _pace(0.3)
@@ -705,7 +773,7 @@ func _recruit(p: int, cost: int) -> void:
 	ps[p]["hired"] += 1
 	var h: int = ps[p]["hired"]
 	log_msg("%s assume un lavoratore (%d$)." % [pname(p), cost])
-	if h == 2:
+	if h == 2 and not ps[p].get("dbl_stolen", false):
 		ps[p]["dbl"] += 1
 		log_msg("   prende il segnalino doppia azione.")
 	elif h == 3:
@@ -1153,7 +1221,7 @@ func destinations(p: int, z: Dictionary) -> Dictionary:
 
 
 func _zone5() -> void:
-	var any := false
+	var any := mine_owner >= 0
 	for z in zods:
 		if z["owner"] >= 0 and is_sea(z["loc"]):
 			any = true
@@ -1161,9 +1229,22 @@ func _zone5() -> void:
 		return
 	log_msg("--- Alto mare ---")
 	for p in order:
+		if mine_owner == p:
+			await _use_mine(p)
 		var mine := zods_of(p, "sea")
 		if mine.is_empty():
 			continue
+		# idrovolante nero: solo per chi l'ha rubato, gratis
+		if black_plane == p and _has_spare_items(p):
+			var bids := []
+			for z in mine:
+				bids.append(z["id"])
+			var rb = await decide(p, {"type": "plane", "zods": bids, "swap": false, "cost": 0, "black": true})
+			if rb is Dictionary and not rb.get("none", false) and int(rb.get("zod", -1)) in bids:
+				if rb.get("items") is Dictionary:
+					set_loadout(p, zod(int(rb["zod"])), rb["items"])
+				log_msg("%s usa l'idrovolante nero." % pname(p))
+				fx.emit("blackplane", {"p": p, "zod": int(rb["zod"])})
 		# idrovolante a noleggio (solo oggetti)
 		var free_planes := planes.count("home")
 		var cost := 3 if (side == "12" or free_planes >= 2) else 4
@@ -1317,6 +1398,8 @@ func _dive_targets(p: int, z: Dictionary) -> Array:
 	var out := []
 	var rows: int = s["grid"].size()
 	for r in rows:
+		if s["grid"][r][col] == "M":
+			break
 		if r + 1 > depth:
 			break
 		var c: String = s["grid"][r][col]
@@ -1328,6 +1411,8 @@ func _dive_targets(p: int, z: Dictionary) -> Array:
 			out.append({"r": r, "v": int(c.substr(1)), "cost": 0, "kind": "T"})
 		elif c.begins_with("N"):
 			var dc := _detect_cost(z, r)
+			if k in ps[p]["merc_cards"] and r + 1 <= depth:
+				dc = 0
 			if dc >= 0:
 				out.append({"r": r, "v": int(c.substr(1)), "cost": dc, "kind": "N"})
 		elif c.begins_with("I"):
@@ -1789,6 +1874,293 @@ func _zone10() -> void:
 		parts.append("%s %d$" % [pname(p), bids[p]])
 	log_msg("Offerte: %s. Nuovo ordine di turno: %s." % [", ".join(parts), ", ".join(order.map(func(x): return pname(x)))])
 	fx.emit("auction", {"bids": bids})
+
+
+# ================================================================ variante «Senza fede né legge»
+
+## Zone con la casella del mercenario ancora libera (e non già usata in partita).
+func merc_zones() -> Array:
+	var out := []
+	if not variant:
+		return out
+	for z in MERC_ZONES:
+		if merc_used.has(z) or merc_q.has(z):
+			continue
+		if L["queues"].has(z) or z == 9:
+			out.append(z)
+	return out
+
+
+func mercs_of(p: int) -> int:
+	var c := 0
+	for m in ps[p]["meeples"]:
+		if m.get("merc", false) and m["loc"] in ["room", "idle"]:
+			c += 1
+	return c
+
+
+## Asta a voce per un mercenario, in ordine di turno, con la cassa nera.
+func _merc_auction() -> void:
+	if mercs_left <= 0:
+		return
+	phase = "merc"
+	zone_now = 0
+	log_msg("--- Asta per un mercenario (ne restano %d) ---" % mercs_left)
+	var high := 0
+	var by := -1
+	var out := {}
+	var guard := 0
+	while guard < 200:
+		guard += 1
+		var active := 0
+		for p in order:
+			if not out.has(p):
+				active += 1
+		if active == 0 or (active == 1 and by >= 0):
+			break
+		var moved := false
+		for p in order:
+			if out.has(p) or p == by:
+				continue
+			var bc: int = ps[p]["acc"]["bc"]
+			if bc <= high:
+				out[p] = true
+				continue
+			var r = await decide(p, {"type": "merc_bid", "high": high, "by": by, "max": bc, "zones": merc_zones()})
+			if abort:
+				return
+			var b := int(r.get("bid", 0)) if r is Dictionary else 0
+			if b > high and b <= bc:
+				high = b
+				by = p
+				moved = true
+				log_msg("   %s offre %d$." % [pname(p), b])
+			else:
+				out[p] = true
+				log_msg("   %s passa." % pname(p))
+			changed.emit()
+			var still := 0
+			for q in order:
+				if not out.has(q):
+					still += 1
+			if still <= 1 and by >= 0:
+				break
+		if not moved:
+			break
+	if by < 0:
+		log_msg("Nessuno compra il mercenario.")
+		phase = "maint"
+		return
+	ps[by]["acc"]["bc"] -= high
+	mercs_left -= 1
+	var mid: int = by * 10 + 6 + ps[by]["merc_n"]
+	ps[by]["merc_n"] += 1
+	ps[by]["meeples"].append({"id": mid, "boss": false, "hat": 0, "loc": "room", "merc": true})
+	log_msg("%s ingaggia un mercenario per %d$." % [pname(by), high])
+	fx.emit("merc", {"p": by})
+	phase = "maint"
+	changed.emit()
+
+
+func _merc_act(z: int) -> void:
+	var e: Dictionary = merc_q[z]
+	var p: int = e["p"]
+	var m := meeple(p, e["m"])
+	m["loc"] = "gone"
+	merc_used[z] = p
+	merc_q.erase(z)
+	match z:
+		1:
+			var got := 0
+			for q in n:
+				if q != p:
+					got += ps[q]["dbl"]
+					ps[q]["dbl"] = 0
+				if ps[q]["hired"] < 2 and not ps[q].get("dbl_stolen", false):
+					ps[q]["dbl_stolen"] = true
+					got += 1
+			ps[p]["dbl"] += got
+			log_msg("Il mercenario di %s ruba %d segnalini doppia azione." % [pname(p), got])
+		2:
+			var opts := visible_techs()
+			if opts.is_empty():
+				return
+			var r = await decide(p, {"type": "merc2", "techs": opts})
+			var t: String = str(r.get("t", opts[0])) if r is Dictionary else str(opts[0])
+			if not (t in opts):
+				t = opts[0]
+			var own: int = tech_owner[t]
+			if own == -1:
+				tech_owner[t] = p
+				tech_sold[t] = 1
+				_gain_item(p, t)
+			else:
+				tech_owner[t] = p
+				if tech_left(t) > 0:
+					tech_sold[t] += 1
+					_gain_item(p, t)
+			log_msg("Il mercenario di %s ruba il brevetto: %s%s." % [pname(p), D.ITEMS[t]["name"], (" a " + pname(own)) if own >= 0 and own < n else ""])
+		3:
+			if merc_pool.is_empty():
+				return
+			var r = await decide(p, {"type": "merc3", "pool": merc_pool.duplicate()})
+			var nums := []
+			if r is Dictionary:
+				for x in r.get("nums", []):
+					if int(x) in merc_pool and not (int(x) in nums):
+						nums.append(int(x))
+			for x in merc_pool:
+				if nums.size() >= 2:
+					break
+				if not (x in nums):
+					nums.append(x)
+			for x in nums.slice(0, 2):
+				merc_pool.erase(x)
+				ps[p]["merc_cards"].append(x)
+				log_msg("Il mercenario di %s ruba la carta tesoro %d." % [pname(p), x])
+				await _gain_card(p, x, false)
+		4:
+			planes = ["off", "off"]
+			black_plane = p
+			log_msg("Il mercenario di %s sabota gli idrovolanti grigi e ruba l'idrovolante nero." % pname(p))
+		7:
+			mine_owner = p
+			log_msg("Il mercenario di %s recupera una mina subacquea." % pname(p))
+		8:
+			await _merc8(p)
+		9:
+			for q in n:
+				if q != p:
+					add_rep(q, -4, "campagna diffamatoria")
+			log_msg("Il mercenario di %s scatena una campagna diffamatoria contro gli avversari." % pname(p))
+	fx.emit("mercact", {"p": p, "z": z})
+	changed.emit()
+	await _pace(0.4)
+
+
+## Posizioni dei tesori del museo: "r<sala>_<posto>" e "s<indice>" per il deposito.
+func museum_spots() -> Dictionary:
+	var out := {}
+	for i in rooms.size():
+		for k in rooms[i]["slots"].size():
+			if rooms[i]["slots"][k] != null:
+				out["r%d_%d" % [i, k]] = rooms[i]["slots"][k]
+	for j in storage.size():
+		out["s%d" % j] = storage[j]
+	return out
+
+
+func museum_free() -> Array:
+	var out := []
+	for i in rooms.size():
+		if room_active(i) and rooms[i]["sponsor"] != -1:
+			for k in rooms[i]["slots"].size():
+				if rooms[i]["slots"][k] == null:
+					out.append("r%d_%d" % [i, k])
+	return out
+
+
+func _spot_get(id: String):
+	if id.begins_with("s"):
+		return storage[int(id.substr(1))]
+	var a := id.substr(1).split("_")
+	return rooms[int(a[0])]["slots"][int(a[1])]
+
+
+func _spot_set(id: String, v) -> void:
+	if id.begins_with("s"):
+		storage[int(id.substr(1))] = v
+		return
+	var a := id.substr(1).split("_")
+	rooms[int(a[0])]["slots"][int(a[1])] = v
+
+
+## Ricontrolla le sale: una sala piena apre, una sala aperta rimasta con un buco chiude.
+func _museum_recheck() -> void:
+	for i in rooms.size():
+		var full := room_free_slot(i) < 0
+		var sp: int = rooms[i]["sponsor"]
+		if rooms[i]["open"] and not full:
+			rooms[i]["open"] = false
+			if sp >= 0:
+				add_rep(sp, -rooms[i]["cfg"]["rp"], "sala richiusa al pubblico")
+		elif not rooms[i]["open"] and full and sp >= 0:
+			rooms[i]["open"] = true
+			add_rep(sp, rooms[i]["cfg"]["rp"], "sala aperta al pubblico")
+
+
+## Applica una mossa del mercenario del museo: {"a": "swap", "x", "y"} oppure {"a": "move", "x", "to"}.
+func apply_merc8(r: Dictionary) -> bool:
+	var spots := museum_spots()
+	var x := str(r.get("x", ""))
+	if not spots.has(x):
+		return false
+	if r.get("a", "") == "swap":
+		var y := str(r.get("y", ""))
+		if not spots.has(y) or x == y:
+			return false
+		var a = _spot_get(x)
+		_spot_set(x, _spot_get(y))
+		_spot_set(y, a)
+	elif r.get("a", "") == "move":
+		var to := str(r.get("to", ""))
+		if not (to in museum_free()):
+			return false
+		_spot_set(to, _spot_get(x))
+		_spot_set(x, null)
+		storage = storage.filter(func(v): return v != null)
+	else:
+		return false
+	_museum_recheck()
+	return true
+
+
+func _merc8(p: int) -> void:
+	if museum_spots().is_empty():
+		return
+	var r = await decide(p, {"type": "merc8", "spots": museum_spots().keys(), "free": museum_free()})
+	if r is Dictionary and apply_merc8(r):
+		log_msg("Il mercenario di %s rimescola i tesori del museo." % pname(p))
+
+
+## Mina subacquea: copre 3x3 caselle sotto la superficie di un sito.
+func mine_options() -> Dictionary:
+	var out := {}
+	for k in sites:
+		if sites[k]["tile"] >= 0:
+			out[k] = range(_site_cols(k).size() - 2)
+	return out
+
+
+func _use_mine(p: int) -> void:
+	var opts := mine_options()
+	if opts.is_empty():
+		return
+	var r = await decide(p, {"type": "mine", "options": opts})
+	if not (r is Dictionary) or r.get("none", false):
+		return
+	var k := int(r.get("site", -1))
+	var c0 := int(r.get("col", -1))
+	if not opts.has(k) or not (c0 in opts[k]):
+		return
+	mine_owner = -1
+	var s: Dictionary = sites[k]
+	var sharks := 0
+	var lost := 0
+	for row in 3:
+		for c in range(c0, c0 + 3):
+			var v: String = s["grid"][row][c]
+			if v == "S":
+				s["grid"][row][c] = "K"
+				sharks += 1
+			elif v.begins_with("T") or v.begins_with("N") or v.begins_with("I"):
+				s["grid"][row][c] = "X"
+				lost += 1
+	ps[p]["sharks"] += sharks
+	s["up"] = true
+	log_msg("%s fa esplodere la mina nel sito %d: %d squali uccisi, %d tesori distrutti." % [pname(p), k, sharks, lost])
+	fx.emit("mine", {"p": p, "site": k})
+	changed.emit()
 
 
 # ================================================================ stipendi, manutenzione, fine anno
